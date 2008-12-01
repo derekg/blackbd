@@ -378,16 +378,16 @@ int main(int argc, char **argv) {
 import urllib,urlib2
 
 #get some data to feed 
-data = eval(urllib2.urlopen('http://timespeople.nytimes.com/view/people/52396025/1/feed.js').read().replace('\\/','/'))
+data = eval(urllib2.urlopen('http://foox/view/people/52396025/1/feed.js').read().replace('\\/','/'))
 
 #post the data to the "live" service
 #includes auth value of "derek"
 #revserse the list so oldest first
 
-[urllib2.urlopen(urllib2.Request('http://app1.prvt.nytimes.com:9078/svc/timespeople/live',urllib.urlencode(x),{'Authorization':'derek'})).read()
+[urllib2.urlopen(urllib2.Request('http://foox/svc/timespeople/live',urllib.urlencode(x),{'Authorization':'derek'})).read()
  for x in data[::-1]]
 
 #pull back the data
-print eval(urllib2.urlopen('http://app1.prvt.nytimes.com:9078/svc/timespeople/live').read().replace('\\/','/'))
+print eval(urllib2.urlopen('http://foox/svc/timespeople/live').read().replace('\\/','/'))
 
 **/
