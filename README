@@ -1,0 +1,9 @@
+Blackbd is a simple HTTP service that takes form encoded POST requests converts them to 
+key/value pairs, stuffs in them into a JSON Object, and then on GET requests returns a 
+JSON array of the JSON Object. It implements a circular LIFO buffer w/ a definable size 
+that controls the number of JSON Objects that should be kept.  POST may be protected
+w/ HTTP Basic Auth.  
+
+Why? 
+-> Great scalability for transient data. 
+
