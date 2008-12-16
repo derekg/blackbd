@@ -42,6 +42,50 @@ typedef struct _board_posts_t {
 	unsigned int post_count;
 } board_posts_t;
 
+
+/** used for basic auth **/
+/* must free the memory returned - passing in -1 will cause the function to treat the incomng as a null terminated string */
+static char *base64_encode(const unsigned char *insrc, int inlen) {
+	inlen = inlen >= 0 ? inlen	: strlen( (const char*)insrc);
+	unsigned int outlen = (inlen + 2) / 3 * 4;
+	static char lookup[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+	unsigned int thirds = inlen / 3;
+	unsigned int i;
+	char *out = malloc(outlen +1);
+	char *rout = out;
+	memset(out,0,outlen+1);
+
+	for (i = 0; i < thirds; i++, out += 4, insrc += 3) {
+		out[0] = lookup[insrc[0] >> 2];
+		out[1] = lookup[((insrc[0] & 0x3) << 4) | (insrc[1] >> 4)];
+		out[2] = lookup[((insrc[1] & 0xf) << 2) | (insrc[2] >> 6)];
+		out[3] = lookup[insrc[2] & 0x3f];
+	}
+	inlen -= (3 * thirds);
+	if (inlen > 0) {
+		unsigned char buf[3];
+		buf[0] = buf[1] = buf[2] = 0;
+		switch (inlen) {
+			case 2:
+				buf[1] = insrc[1];
+			case 1:
+				buf[0] = insrc[0];
+		}
+		out[0] = lookup[buf[0] >> 2];
+		out[1] = lookup[((buf[0] & 0x3) << 4) | (buf[1] >> 4)];
+		out[3] = '=';
+		if (inlen == 1) {
+				out[2] = '=';
+		} else {
+				out[2] = lookup[(buf[1] & 0xf) << 2];
+		}
+		out += 4;
+	}
+	*out = '\0';
+	return rout;
+}
+
 static char * json_string(const char *in) { 
 	//length is *2 for each character if escape + 1 for terminator and +2 for leading/trailing "
 	char *out = calloc(((strlen(in)*2) +3),sizeof(char));  
@@ -151,15 +195,19 @@ void bboard_POST(struct evhttp_request *request, void *_board) {
 	board->post_count++;
 	const char *req_secret = NULL;
 
+	/** security hole - attacker could post a long combination of characters since we are not parsing the header **/
 	if(board->post_secret && 
-			(req_secret =evhttp_find_header(request->input_headers,"Authorization"))!=NULL && 
-			strcmp(board->post_secret,req_secret)!=0 ) { 
+			((req_secret =evhttp_find_header(request->input_headers,"Authorization"))==NULL || 
+			strstr(req_secret,board->post_secret)==NULL) ) { 
 		struct evbuffer *buffer = evbuffer_new();
+		printf("post_secret = %s | header = %s\n",board->post_secret,req_secret ? req_secret : "(null)");
 		evhttp_add_header(request->output_headers, "Server", BLACKBD_VERSION);
 		evhttp_add_header(request->output_headers, "Content-Type", "text/plain");
+		evhttp_add_header(request->output_headers, "WWW-Authenticate", "Basic realm=\"Blackbd Server POSTING\"");
 		evhttp_add_header(request->output_headers, "Connection", "close");
-		evhttp_send_reply(request,HTTP_BADREQUEST,"Bad Request",buffer);
+		evhttp_send_reply(request,401,"UNAUTHORIZED",buffer);
 		evbuffer_free(buffer);
+		return;
 	}
 	kv_pair_list_t *entry = post_parse(EVBUFFER_DATA(request->input_buffer),EVBUFFER_LENGTH(request->input_buffer));
 
@@ -178,15 +226,33 @@ void bboard_POST(struct evhttp_request *request, void *_board) {
 		gmtime_r(&now,&(board->updated_time));
 		strftime(board->updated_string,sizeof(board->updated_string)-1,
 				"%a, %d %b %Y %H:%M:%S GMT",&(board->updated_time));
+
+		struct evbuffer *buffer = evbuffer_new();
+		evhttp_add_header(request->output_headers, "Server", BLACKBD_VERSION);
+		evhttp_add_header(request->output_headers, "Date", board->updated_string);
+		evhttp_add_header(request->output_headers, "Last-Modified", board->updated_string);
+		evhttp_add_header(request->output_headers, "Content-Type", "text/plain");
+		evhttp_add_header(request->output_headers, "Cache-control", "max-age=10");
+		evhttp_add_header(request->output_headers, "Content-Length", board->json_output_len_string);
+		evhttp_add_header(request->output_headers, "Connection", "close");
+		evbuffer_add(buffer,board->json_output,board->json_output_len);
+		evhttp_send_reply(request,HTTP_OK,"OK",buffer);
+		evbuffer_free(buffer);
+	} else { 
+		char current_time[128];
+		time_t now = time(NULL);
+		struct tm current; 
+		gmtime_r(&now,&current);
+		strftime(current_time,sizeof(current_time)-1,
+				"%a, %d %b %Y %H:%M:%S GMT",&current);
+		struct evbuffer *buffer = evbuffer_new();
+		evhttp_add_header(request->output_headers, "Server", BLACKBD_VERSION);
+		evhttp_add_header(request->output_headers, "Date", current_time);
+		evhttp_add_header(request->output_headers, "Content-Type", "text/plain");
+		evhttp_add_header(request->output_headers, "Connection", "close");
+		evhttp_send_reply(request,HTTP_BADREQUEST,"Bad Request",buffer);
+		evbuffer_free(buffer);
 	}
-	// TODO :  handle the error cases and better repsonse code shit
-	struct evbuffer *buffer = evbuffer_new();
-	evbuffer_add_printf(buffer,"%s" , entry ? "success" : "missing arguments");
-	evhttp_add_header(request->output_headers, "Server", BLACKBD_VERSION);
-	evhttp_add_header(request->output_headers, "Content-Type", "text/plain");
-	evhttp_add_header(request->output_headers, "Connection", "close");
-	evhttp_send_reply(request,HTTP_OK,"OK",buffer);
-	evbuffer_free(buffer);
 }
 
 void bboard_GET(struct evhttp_request *request, void *_board) { 
@@ -308,14 +374,14 @@ void launch_bboard(int port,char *uri,const char *secret,int queue_size) {
 
 	struct event_base *base = event_init();
 	struct evhttp *http = evhttp_new(base);
-  evhttp_set_cb (http, uri, bboard_callback, &board);
+	evhttp_set_cb (http, uri, bboard_callback, &board);
 	evhttp_set_cb (http,"/stats", bboard_callback_stats,&board);
 	evhttp_bind_socket(http,"0.0.0.0",port);
 	event_dispatch();
 }
 
 static void print_usage() { 
-	printf("Usage: blackbd -p port -u /uri -q queue-size -s secret-handed-to-Autorization-header-for-post -d[ebug] -h[elp]\n");
+	printf("Usage: blackbd -p port -u /uri -q queue-size -s username:password -d[ebug] -h[elp]\n");
 }
 int main(int argc, char **argv) { 
 	int opt;
@@ -329,7 +395,7 @@ int main(int argc, char **argv) {
 		switch(opt){ 
 			case 'p': port = atoi(optarg); break;
 			case 'u': uri = strdup(optarg); break;
-			case 's': secret= strdup(optarg); break;
+			case 's': secret= base64_encode((const unsigned char *)optarg,-1); break;
 			case 'q': queue_size = atoi(optarg); break;
 			case 'd': debug = 1; break;
 			case 'v': printf("Version: %s\n",BLACKBD_VERSION);
@@ -375,16 +441,16 @@ int main(int argc, char **argv) {
 
 /*** PYTHON ****/ 
 /**
-import urllib,urlib2
+import urllib,urllib2,base64
 
 #get some data to feed 
 data = eval(urllib2.urlopen('http://foox/view/people/52396025/1/feed.js').read().replace('\\/','/'))
 
 #post the data to the "live" service
-#includes auth value of "derek"
+#includes basic auth value of "derek:derek"
 #revserse the list so oldest first
 
-[urllib2.urlopen(urllib2.Request('http://foox/svc/timespeople/live',urllib.urlencode(x),{'Authorization':'derek'})).read()
+[urllib2.urlopen(urllib2.Request('http://foox/svc/timespeople/live',urllib.urlencode(x),{'Authorization':'Basic %s' %  base64.b64encode('derek:derek')})).read()
  for x in data[::-1]]
 
 #pull back the data
