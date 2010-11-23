@@ -7,4 +7,5 @@ w/ HTTP Basic Auth.
 Why? 
 -> Great scalability for transient data. 
 -> Not sure
+-> better smell
 
