@@ -311,7 +311,7 @@ void bboard_GET(struct evhttp_request *request, void *_board) {
 		if(callback) {
 			char buffer_len[128];
 			evbuffer_add_printf(buffer,");");
-			snprintf(buffer_len,sizeof(buffer_len),"%d",EVBUFFER_LENGTH(buffer));	
+			snprintf(buffer_len,sizeof(buffer_len),"%ld",EVBUFFER_LENGTH(buffer));	
 			evhttp_add_header(request->output_headers, "Content-Length", buffer_len);
 		} else {
 			evhttp_add_header(request->output_headers, "Content-Length", board->json_output_len_string);
@@ -343,7 +343,7 @@ void bboard_callback_stats(struct evhttp_request *request, void *_board) {
 	strftime(current_time,sizeof(current_time)-1,
 				"%a, %d %b %Y %H:%M:%S GMT",&(board->updated_time));
 	evbuffer_add_printf(buffer,"{\"GET\" : %d , \"POST\" : %d }",board->get_count,board->post_count);
-	snprintf(content_length,sizeof(content_length),"%d",EVBUFFER_LENGTH(buffer));
+	snprintf(content_length,sizeof(content_length),"%ld",EVBUFFER_LENGTH(buffer));
 	evhttp_add_header(request->output_headers, "Server", BLACKBD_VERSION);
 	evhttp_add_header(request->output_headers, "Date", current_time);
 	evhttp_add_header(request->output_headers, "Content-Type", "text/plain");
